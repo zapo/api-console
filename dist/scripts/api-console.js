@@ -958,10 +958,6 @@
             $scope.methodInfo.headers.plain = {};
           }
 
-          if (!$scope.methodInfo.queryParameters) {
-            $scope.methodInfo.queryParameters = {};
-          }
-
           updateContextData('headers', name, $scope.methodInfo.headers.plain, $scope.context.headers);
           updateContextData('queryParameters', name, $scope.methodInfo.queryParameters, $scope.context.queryParameters);
         }
