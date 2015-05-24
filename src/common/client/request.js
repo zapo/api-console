@@ -105,7 +105,7 @@
 
   RAML.Client.Request = {
     create: function(url, method) {
-      return new RequestDsl({ url: url, method: method });
+      return new RequestDsl({ url: url, method: method.toUpperCase() });
     }
   };
 })();
