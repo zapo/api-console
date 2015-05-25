@@ -2496,7 +2496,7 @@
 
     if (grantType === 'token' || grantType === 'code') {
       window.oauth2Callback = function (uri) {
-        auth[grantType].getToken(uri, function (err, user, raw) {
+        auth[grantType].getToken(uri).then(function(err, user, raw) {
           if (err) {
             done(raw, err);
           }
@@ -2513,7 +2513,7 @@
     }
 
     if (grantType === 'owner') {
-      auth.owner.getToken(this.credentials.username, this.credentials.password, function (err, user, raw) {
+      auth.owner.getToken(this.credentials.username, this.credentials.password).then(function (err, user, raw) {
         if (err) {
           done(raw, err);
         }
@@ -2527,7 +2527,7 @@
     }
 
     if (grantType === 'credentials') {
-      auth.credentials.getToken(function (err, user, raw) {
+      auth.credentials.getToken().then(function (err, user, raw) {
         if (err) {
           done(raw, err);
         }
