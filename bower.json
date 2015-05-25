@@ -6,6 +6,7 @@
     "url": "https://github.com/mulesoft/api-console.git"
   },
   "dependencies": {
+    "client-oauth2": "~0.3.0",
     "angular": "~1.2.16",
     "angular-highlightjs": "~0.3.2",
     "angular-marked": "~0.0.12",
