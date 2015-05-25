@@ -34,7 +34,6 @@ module.exports = function (grunt) {
         'bower_components/slug/slug.js',
         'bower_components/FileSaver/FileSaver.js',
         'bower_components/raml-client-generator/dist/raml-client-generator.js',
-        'bower_components/popsicle/popsicle.js',
         'bower_components/client-oauth2/client-oauth2.js'
       ],
       html: ['src/index.html'],
