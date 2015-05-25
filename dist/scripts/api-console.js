@@ -2483,7 +2483,18 @@
     return window.open(location, 'Authentication', 'toolbar=no, location=no, directories=no, status=no, menubar=no, scrollbars=no, resizable=no, copyhistory=no, width=' + w + ', height=' + h + ', top=' + top + ', left=' + left);
   }
 
+  Oauth2.prototype.parametrizeRequest = function(options) {
+    return {
+      url: options.url,
+      method: options.method,
+      body: options.body || options.data,
+      headers: options.headers
+    };
+  };
+
   Oauth2.prototype.authenticate = function(options, done) {
+    options = this.parametrizeRequest(options);
+
     var auth = new ClientOAuth2({
       clientId:         this.credentials.clientId,
       clientSecret:     this.credentials.clientSecret,
