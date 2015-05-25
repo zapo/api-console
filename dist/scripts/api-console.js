@@ -2496,14 +2496,10 @@
 
     if (grantType === 'token' || grantType === 'code') {
       window.oauth2Callback = function (uri) {
-        auth[grantType].getToken(uri).then(function(err, user, raw) {
-          if (err) {
-            done(raw, err);
-          }
-
+        auth[grantType].getToken(uri).then(function(user) {
           if (user && user.accessToken) {
-            user.request(options, function (err, res) {
-              done(res.raw, err);
+            user.request(options).then(function (res) {
+              done(res.raw);
             });
           }
         });
@@ -2513,28 +2509,20 @@
     }
 
     if (grantType === 'owner') {
-      auth.owner.getToken(this.credentials.username, this.credentials.password).then(function (err, user, raw) {
-        if (err) {
-          done(raw, err);
-        }
-
+      auth.owner.getToken(this.credentials.username, this.credentials.password).then(function (user) {
         if (user && user.accessToken) {
-          user.request(options, function (err, res) {
-            done(res.raw, err);
+          user.request(options).then(function (res) {
+            done(res.raw);
           });
         }
       });
     }
 
     if (grantType === 'credentials') {
-      auth.credentials.getToken().then(function (err, user, raw) {
-        if (err) {
-          done(raw, err);
-        }
-
+      auth.credentials.getToken().then(function (user) {
         if (user && user.accessToken) {
-          user.request(options, function (err, res) {
-            done(res.raw, err);
+          user.request(options).then(function (res) {
+            done(res.raw);
           });
         }
       });
