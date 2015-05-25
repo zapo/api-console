@@ -1,3 +1,2345 @@
+/*!
+ * @overview es6-promise - a tiny implementation of Promises/A+.
+ * @copyright Copyright (c) 2014 Yehuda Katz, Tom Dale, Stefan Penner and contributors (Conversion to ES6 API by Jake Archibald)
+ * @license   Licensed under MIT license
+ *            See https://raw.githubusercontent.com/jakearchibald/es6-promise/master/LICENSE
+ * @version   2.1.0
+ */
+
+(function() {
+    "use strict";
+    function lib$es6$promise$utils$$objectOrFunction(x) {
+      return typeof x === 'function' || (typeof x === 'object' && x !== null);
+    }
+
+    function lib$es6$promise$utils$$isFunction(x) {
+      return typeof x === 'function';
+    }
+
+    function lib$es6$promise$utils$$isMaybeThenable(x) {
+      return typeof x === 'object' && x !== null;
+    }
+
+    var lib$es6$promise$utils$$_isArray;
+    if (!Array.isArray) {
+      lib$es6$promise$utils$$_isArray = function (x) {
+        return Object.prototype.toString.call(x) === '[object Array]';
+      };
+    } else {
+      lib$es6$promise$utils$$_isArray = Array.isArray;
+    }
+
+    var lib$es6$promise$utils$$isArray = lib$es6$promise$utils$$_isArray;
+    var lib$es6$promise$asap$$len = 0;
+    var lib$es6$promise$asap$$toString = {}.toString;
+    var lib$es6$promise$asap$$vertxNext;
+    function lib$es6$promise$asap$$asap(callback, arg) {
+      lib$es6$promise$asap$$queue[lib$es6$promise$asap$$len] = callback;
+      lib$es6$promise$asap$$queue[lib$es6$promise$asap$$len + 1] = arg;
+      lib$es6$promise$asap$$len += 2;
+      if (lib$es6$promise$asap$$len === 2) {
+        // If len is 2, that means that we need to schedule an async flush.
+        // If additional callbacks are queued before the queue is flushed, they
+        // will be processed by this flush that we are scheduling.
+        lib$es6$promise$asap$$scheduleFlush();
+      }
+    }
+
+    var lib$es6$promise$asap$$default = lib$es6$promise$asap$$asap;
+
+    var lib$es6$promise$asap$$browserWindow = (typeof window !== 'undefined') ? window : undefined;
+    var lib$es6$promise$asap$$browserGlobal = lib$es6$promise$asap$$browserWindow || {};
+    var lib$es6$promise$asap$$BrowserMutationObserver = lib$es6$promise$asap$$browserGlobal.MutationObserver || lib$es6$promise$asap$$browserGlobal.WebKitMutationObserver;
+    var lib$es6$promise$asap$$isNode = typeof process !== 'undefined' && {}.toString.call(process) === '[object process]';
+
+    // test for web worker but not in IE10
+    var lib$es6$promise$asap$$isWorker = typeof Uint8ClampedArray !== 'undefined' &&
+      typeof importScripts !== 'undefined' &&
+      typeof MessageChannel !== 'undefined';
+
+    // node
+    function lib$es6$promise$asap$$useNextTick() {
+      var nextTick = process.nextTick;
+      // node version 0.10.x displays a deprecation warning when nextTick is used recursively
+      // setImmediate should be used instead instead
+      var version = process.versions.node.match(/^(?:(\d+)\.)?(?:(\d+)\.)?(\*|\d+)$/);
+      if (Array.isArray(version) && version[1] === '0' && version[2] === '10') {
+        nextTick = setImmediate;
+      }
+      return function() {
+        nextTick(lib$es6$promise$asap$$flush);
+      };
+    }
+
+    // vertx
+    function lib$es6$promise$asap$$useVertxTimer() {
+      return function() {
+        lib$es6$promise$asap$$vertxNext(lib$es6$promise$asap$$flush);
+      };
+    }
+
+    function lib$es6$promise$asap$$useMutationObserver() {
+      var iterations = 0;
+      var observer = new lib$es6$promise$asap$$BrowserMutationObserver(lib$es6$promise$asap$$flush);
+      var node = document.createTextNode('');
+      observer.observe(node, { characterData: true });
+
+      return function() {
+        node.data = (iterations = ++iterations % 2);
+      };
+    }
+
+    // web worker
+    function lib$es6$promise$asap$$useMessageChannel() {
+      var channel = new MessageChannel();
+      channel.port1.onmessage = lib$es6$promise$asap$$flush;
+      return function () {
+        channel.port2.postMessage(0);
+      };
+    }
+
+    function lib$es6$promise$asap$$useSetTimeout() {
+      return function() {
+        setTimeout(lib$es6$promise$asap$$flush, 1);
+      };
+    }
+
+    var lib$es6$promise$asap$$queue = new Array(1000);
+    function lib$es6$promise$asap$$flush() {
+      for (var i = 0; i < lib$es6$promise$asap$$len; i+=2) {
+        var callback = lib$es6$promise$asap$$queue[i];
+        var arg = lib$es6$promise$asap$$queue[i+1];
+
+        callback(arg);
+
+        lib$es6$promise$asap$$queue[i] = undefined;
+        lib$es6$promise$asap$$queue[i+1] = undefined;
+      }
+
+      lib$es6$promise$asap$$len = 0;
+    }
+
+    function lib$es6$promise$asap$$attemptVertex() {
+      try {
+        var r = require;
+        var vertx = r('vertx');
+        lib$es6$promise$asap$$vertxNext = vertx.runOnLoop || vertx.runOnContext;
+        return lib$es6$promise$asap$$useVertxTimer();
+      } catch(e) {
+        return lib$es6$promise$asap$$useSetTimeout();
+      }
+    }
+
+    var lib$es6$promise$asap$$scheduleFlush;
+    // Decide what async method to use to triggering processing of queued callbacks:
+    if (lib$es6$promise$asap$$isNode) {
+      lib$es6$promise$asap$$scheduleFlush = lib$es6$promise$asap$$useNextTick();
+    } else if (lib$es6$promise$asap$$BrowserMutationObserver) {
+      lib$es6$promise$asap$$scheduleFlush = lib$es6$promise$asap$$useMutationObserver();
+    } else if (lib$es6$promise$asap$$isWorker) {
+      lib$es6$promise$asap$$scheduleFlush = lib$es6$promise$asap$$useMessageChannel();
+    } else if (lib$es6$promise$asap$$browserWindow === undefined && typeof require === 'function') {
+      lib$es6$promise$asap$$scheduleFlush = lib$es6$promise$asap$$attemptVertex();
+    } else {
+      lib$es6$promise$asap$$scheduleFlush = lib$es6$promise$asap$$useSetTimeout();
+    }
+
+    function lib$es6$promise$$internal$$noop() {}
+
+    var lib$es6$promise$$internal$$PENDING   = void 0;
+    var lib$es6$promise$$internal$$FULFILLED = 1;
+    var lib$es6$promise$$internal$$REJECTED  = 2;
+
+    var lib$es6$promise$$internal$$GET_THEN_ERROR = new lib$es6$promise$$internal$$ErrorObject();
+
+    function lib$es6$promise$$internal$$selfFullfillment() {
+      return new TypeError("You cannot resolve a promise with itself");
+    }
+
+    function lib$es6$promise$$internal$$cannotReturnOwn() {
+      return new TypeError('A promises callback cannot return that same promise.');
+    }
+
+    function lib$es6$promise$$internal$$getThen(promise) {
+      try {
+        return promise.then;
+      } catch(error) {
+        lib$es6$promise$$internal$$GET_THEN_ERROR.error = error;
+        return lib$es6$promise$$internal$$GET_THEN_ERROR;
+      }
+    }
+
+    function lib$es6$promise$$internal$$tryThen(then, value, fulfillmentHandler, rejectionHandler) {
+      try {
+        then.call(value, fulfillmentHandler, rejectionHandler);
+      } catch(e) {
+        return e;
+      }
+    }
+
+    function lib$es6$promise$$internal$$handleForeignThenable(promise, thenable, then) {
+       lib$es6$promise$asap$$default(function(promise) {
+        var sealed = false;
+        var error = lib$es6$promise$$internal$$tryThen(then, thenable, function(value) {
+          if (sealed) { return; }
+          sealed = true;
+          if (thenable !== value) {
+            lib$es6$promise$$internal$$resolve(promise, value);
+          } else {
+            lib$es6$promise$$internal$$fulfill(promise, value);
+          }
+        }, function(reason) {
+          if (sealed) { return; }
+          sealed = true;
+
+          lib$es6$promise$$internal$$reject(promise, reason);
+        }, 'Settle: ' + (promise._label || ' unknown promise'));
+
+        if (!sealed && error) {
+          sealed = true;
+          lib$es6$promise$$internal$$reject(promise, error);
+        }
+      }, promise);
+    }
+
+    function lib$es6$promise$$internal$$handleOwnThenable(promise, thenable) {
+      if (thenable._state === lib$es6$promise$$internal$$FULFILLED) {
+        lib$es6$promise$$internal$$fulfill(promise, thenable._result);
+      } else if (promise._state === lib$es6$promise$$internal$$REJECTED) {
+        lib$es6$promise$$internal$$reject(promise, thenable._result);
+      } else {
+        lib$es6$promise$$internal$$subscribe(thenable, undefined, function(value) {
+          lib$es6$promise$$internal$$resolve(promise, value);
+        }, function(reason) {
+          lib$es6$promise$$internal$$reject(promise, reason);
+        });
+      }
+    }
+
+    function lib$es6$promise$$internal$$handleMaybeThenable(promise, maybeThenable) {
+      if (maybeThenable.constructor === promise.constructor) {
+        lib$es6$promise$$internal$$handleOwnThenable(promise, maybeThenable);
+      } else {
+        var then = lib$es6$promise$$internal$$getThen(maybeThenable);
+
+        if (then === lib$es6$promise$$internal$$GET_THEN_ERROR) {
+          lib$es6$promise$$internal$$reject(promise, lib$es6$promise$$internal$$GET_THEN_ERROR.error);
+        } else if (then === undefined) {
+          lib$es6$promise$$internal$$fulfill(promise, maybeThenable);
+        } else if (lib$es6$promise$utils$$isFunction(then)) {
+          lib$es6$promise$$internal$$handleForeignThenable(promise, maybeThenable, then);
+        } else {
+          lib$es6$promise$$internal$$fulfill(promise, maybeThenable);
+        }
+      }
+    }
+
+    function lib$es6$promise$$internal$$resolve(promise, value) {
+      if (promise === value) {
+        lib$es6$promise$$internal$$reject(promise, lib$es6$promise$$internal$$selfFullfillment());
+      } else if (lib$es6$promise$utils$$objectOrFunction(value)) {
+        lib$es6$promise$$internal$$handleMaybeThenable(promise, value);
+      } else {
+        lib$es6$promise$$internal$$fulfill(promise, value);
+      }
+    }
+
+    function lib$es6$promise$$internal$$publishRejection(promise) {
+      if (promise._onerror) {
+        promise._onerror(promise._result);
+      }
+
+      lib$es6$promise$$internal$$publish(promise);
+    }
+
+    function lib$es6$promise$$internal$$fulfill(promise, value) {
+      if (promise._state !== lib$es6$promise$$internal$$PENDING) { return; }
+
+      promise._result = value;
+      promise._state = lib$es6$promise$$internal$$FULFILLED;
+
+      if (promise._subscribers.length !== 0) {
+        lib$es6$promise$asap$$default(lib$es6$promise$$internal$$publish, promise);
+      }
+    }
+
+    function lib$es6$promise$$internal$$reject(promise, reason) {
+      if (promise._state !== lib$es6$promise$$internal$$PENDING) { return; }
+      promise._state = lib$es6$promise$$internal$$REJECTED;
+      promise._result = reason;
+
+      lib$es6$promise$asap$$default(lib$es6$promise$$internal$$publishRejection, promise);
+    }
+
+    function lib$es6$promise$$internal$$subscribe(parent, child, onFulfillment, onRejection) {
+      var subscribers = parent._subscribers;
+      var length = subscribers.length;
+
+      parent._onerror = null;
+
+      subscribers[length] = child;
+      subscribers[length + lib$es6$promise$$internal$$FULFILLED] = onFulfillment;
+      subscribers[length + lib$es6$promise$$internal$$REJECTED]  = onRejection;
+
+      if (length === 0 && parent._state) {
+        lib$es6$promise$asap$$default(lib$es6$promise$$internal$$publish, parent);
+      }
+    }
+
+    function lib$es6$promise$$internal$$publish(promise) {
+      var subscribers = promise._subscribers;
+      var settled = promise._state;
+
+      if (subscribers.length === 0) { return; }
+
+      var child, callback, detail = promise._result;
+
+      for (var i = 0; i < subscribers.length; i += 3) {
+        child = subscribers[i];
+        callback = subscribers[i + settled];
+
+        if (child) {
+          lib$es6$promise$$internal$$invokeCallback(settled, child, callback, detail);
+        } else {
+          callback(detail);
+        }
+      }
+
+      promise._subscribers.length = 0;
+    }
+
+    function lib$es6$promise$$internal$$ErrorObject() {
+      this.error = null;
+    }
+
+    var lib$es6$promise$$internal$$TRY_CATCH_ERROR = new lib$es6$promise$$internal$$ErrorObject();
+
+    function lib$es6$promise$$internal$$tryCatch(callback, detail) {
+      try {
+        return callback(detail);
+      } catch(e) {
+        lib$es6$promise$$internal$$TRY_CATCH_ERROR.error = e;
+        return lib$es6$promise$$internal$$TRY_CATCH_ERROR;
+      }
+    }
+
+    function lib$es6$promise$$internal$$invokeCallback(settled, promise, callback, detail) {
+      var hasCallback = lib$es6$promise$utils$$isFunction(callback),
+          value, error, succeeded, failed;
+
+      if (hasCallback) {
+        value = lib$es6$promise$$internal$$tryCatch(callback, detail);
+
+        if (value === lib$es6$promise$$internal$$TRY_CATCH_ERROR) {
+          failed = true;
+          error = value.error;
+          value = null;
+        } else {
+          succeeded = true;
+        }
+
+        if (promise === value) {
+          lib$es6$promise$$internal$$reject(promise, lib$es6$promise$$internal$$cannotReturnOwn());
+          return;
+        }
+
+      } else {
+        value = detail;
+        succeeded = true;
+      }
+
+      if (promise._state !== lib$es6$promise$$internal$$PENDING) {
+        // noop
+      } else if (hasCallback && succeeded) {
+        lib$es6$promise$$internal$$resolve(promise, value);
+      } else if (failed) {
+        lib$es6$promise$$internal$$reject(promise, error);
+      } else if (settled === lib$es6$promise$$internal$$FULFILLED) {
+        lib$es6$promise$$internal$$fulfill(promise, value);
+      } else if (settled === lib$es6$promise$$internal$$REJECTED) {
+        lib$es6$promise$$internal$$reject(promise, value);
+      }
+    }
+
+    function lib$es6$promise$$internal$$initializePromise(promise, resolver) {
+      try {
+        resolver(function resolvePromise(value){
+          lib$es6$promise$$internal$$resolve(promise, value);
+        }, function rejectPromise(reason) {
+          lib$es6$promise$$internal$$reject(promise, reason);
+        });
+      } catch(e) {
+        lib$es6$promise$$internal$$reject(promise, e);
+      }
+    }
+
+    function lib$es6$promise$enumerator$$Enumerator(Constructor, input) {
+      var enumerator = this;
+
+      enumerator._instanceConstructor = Constructor;
+      enumerator.promise = new Constructor(lib$es6$promise$$internal$$noop);
+
+      if (enumerator._validateInput(input)) {
+        enumerator._input     = input;
+        enumerator.length     = input.length;
+        enumerator._remaining = input.length;
+
+        enumerator._init();
+
+        if (enumerator.length === 0) {
+          lib$es6$promise$$internal$$fulfill(enumerator.promise, enumerator._result);
+        } else {
+          enumerator.length = enumerator.length || 0;
+          enumerator._enumerate();
+          if (enumerator._remaining === 0) {
+            lib$es6$promise$$internal$$fulfill(enumerator.promise, enumerator._result);
+          }
+        }
+      } else {
+        lib$es6$promise$$internal$$reject(enumerator.promise, enumerator._validationError());
+      }
+    }
+
+    lib$es6$promise$enumerator$$Enumerator.prototype._validateInput = function(input) {
+      return lib$es6$promise$utils$$isArray(input);
+    };
+
+    lib$es6$promise$enumerator$$Enumerator.prototype._validationError = function() {
+      return new Error('Array Methods must be provided an Array');
+    };
+
+    lib$es6$promise$enumerator$$Enumerator.prototype._init = function() {
+      this._result = new Array(this.length);
+    };
+
+    var lib$es6$promise$enumerator$$default = lib$es6$promise$enumerator$$Enumerator;
+
+    lib$es6$promise$enumerator$$Enumerator.prototype._enumerate = function() {
+      var enumerator = this;
+
+      var length  = enumerator.length;
+      var promise = enumerator.promise;
+      var input   = enumerator._input;
+
+      for (var i = 0; promise._state === lib$es6$promise$$internal$$PENDING && i < length; i++) {
+        enumerator._eachEntry(input[i], i);
+      }
+    };
+
+    lib$es6$promise$enumerator$$Enumerator.prototype._eachEntry = function(entry, i) {
+      var enumerator = this;
+      var c = enumerator._instanceConstructor;
+
+      if (lib$es6$promise$utils$$isMaybeThenable(entry)) {
+        if (entry.constructor === c && entry._state !== lib$es6$promise$$internal$$PENDING) {
+          entry._onerror = null;
+          enumerator._settledAt(entry._state, i, entry._result);
+        } else {
+          enumerator._willSettleAt(c.resolve(entry), i);
+        }
+      } else {
+        enumerator._remaining--;
+        enumerator._result[i] = entry;
+      }
+    };
+
+    lib$es6$promise$enumerator$$Enumerator.prototype._settledAt = function(state, i, value) {
+      var enumerator = this;
+      var promise = enumerator.promise;
+
+      if (promise._state === lib$es6$promise$$internal$$PENDING) {
+        enumerator._remaining--;
+
+        if (state === lib$es6$promise$$internal$$REJECTED) {
+          lib$es6$promise$$internal$$reject(promise, value);
+        } else {
+          enumerator._result[i] = value;
+        }
+      }
+
+      if (enumerator._remaining === 0) {
+        lib$es6$promise$$internal$$fulfill(promise, enumerator._result);
+      }
+    };
+
+    lib$es6$promise$enumerator$$Enumerator.prototype._willSettleAt = function(promise, i) {
+      var enumerator = this;
+
+      lib$es6$promise$$internal$$subscribe(promise, undefined, function(value) {
+        enumerator._settledAt(lib$es6$promise$$internal$$FULFILLED, i, value);
+      }, function(reason) {
+        enumerator._settledAt(lib$es6$promise$$internal$$REJECTED, i, reason);
+      });
+    };
+    function lib$es6$promise$promise$all$$all(entries) {
+      return new lib$es6$promise$enumerator$$default(this, entries).promise;
+    }
+    var lib$es6$promise$promise$all$$default = lib$es6$promise$promise$all$$all;
+    function lib$es6$promise$promise$race$$race(entries) {
+      /*jshint validthis:true */
+      var Constructor = this;
+
+      var promise = new Constructor(lib$es6$promise$$internal$$noop);
+
+      if (!lib$es6$promise$utils$$isArray(entries)) {
+        lib$es6$promise$$internal$$reject(promise, new TypeError('You must pass an array to race.'));
+        return promise;
+      }
+
+      var length = entries.length;
+
+      function onFulfillment(value) {
+        lib$es6$promise$$internal$$resolve(promise, value);
+      }
+
+      function onRejection(reason) {
+        lib$es6$promise$$internal$$reject(promise, reason);
+      }
+
+      for (var i = 0; promise._state === lib$es6$promise$$internal$$PENDING && i < length; i++) {
+        lib$es6$promise$$internal$$subscribe(Constructor.resolve(entries[i]), undefined, onFulfillment, onRejection);
+      }
+
+      return promise;
+    }
+    var lib$es6$promise$promise$race$$default = lib$es6$promise$promise$race$$race;
+    function lib$es6$promise$promise$resolve$$resolve(object) {
+      /*jshint validthis:true */
+      var Constructor = this;
+
+      if (object && typeof object === 'object' && object.constructor === Constructor) {
+        return object;
+      }
+
+      var promise = new Constructor(lib$es6$promise$$internal$$noop);
+      lib$es6$promise$$internal$$resolve(promise, object);
+      return promise;
+    }
+    var lib$es6$promise$promise$resolve$$default = lib$es6$promise$promise$resolve$$resolve;
+    function lib$es6$promise$promise$reject$$reject(reason) {
+      /*jshint validthis:true */
+      var Constructor = this;
+      var promise = new Constructor(lib$es6$promise$$internal$$noop);
+      lib$es6$promise$$internal$$reject(promise, reason);
+      return promise;
+    }
+    var lib$es6$promise$promise$reject$$default = lib$es6$promise$promise$reject$$reject;
+
+    var lib$es6$promise$promise$$counter = 0;
+
+    function lib$es6$promise$promise$$needsResolver() {
+      throw new TypeError('You must pass a resolver function as the first argument to the promise constructor');
+    }
+
+    function lib$es6$promise$promise$$needsNew() {
+      throw new TypeError("Failed to construct 'Promise': Please use the 'new' operator, this object constructor cannot be called as a function.");
+    }
+
+    var lib$es6$promise$promise$$default = lib$es6$promise$promise$$Promise;
+    /**
+      Promise objects represent the eventual result of an asynchronous operation. The
+      primary way of interacting with a promise is through its `then` method, which
+      registers callbacks to receive either a promise’s eventual value or the reason
+      why the promise cannot be fulfilled.
+
+      Terminology
+      -----------
+
+      - `promise` is an object or function with a `then` method whose behavior conforms to this specification.
+      - `thenable` is an object or function that defines a `then` method.
+      - `value` is any legal JavaScript value (including undefined, a thenable, or a promise).
+      - `exception` is a value that is thrown using the throw statement.
+      - `reason` is a value that indicates why a promise was rejected.
+      - `settled` the final resting state of a promise, fulfilled or rejected.
+
+      A promise can be in one of three states: pending, fulfilled, or rejected.
+
+      Promises that are fulfilled have a fulfillment value and are in the fulfilled
+      state.  Promises that are rejected have a rejection reason and are in the
+      rejected state.  A fulfillment value is never a thenable.
+
+      Promises can also be said to *resolve* a value.  If this value is also a
+      promise, then the original promise's settled state will match the value's
+      settled state.  So a promise that *resolves* a promise that rejects will
+      itself reject, and a promise that *resolves* a promise that fulfills will
+      itself fulfill.
+
+
+      Basic Usage:
+      ------------
+
+      ```js
+      var promise = new Promise(function(resolve, reject) {
+        // on success
+        resolve(value);
+
+        // on failure
+        reject(reason);
+      });
+
+      promise.then(function(value) {
+        // on fulfillment
+      }, function(reason) {
+        // on rejection
+      });
+      ```
+
+      Advanced Usage:
+      ---------------
+
+      Promises shine when abstracting away asynchronous interactions such as
+      `XMLHttpRequest`s.
+
+      ```js
+      function getJSON(url) {
+        return new Promise(function(resolve, reject){
+          var xhr = new XMLHttpRequest();
+
+          xhr.open('GET', url);
+          xhr.onreadystatechange = handler;
+          xhr.responseType = 'json';
+          xhr.setRequestHeader('Accept', 'application/json');
+          xhr.send();
+
+          function handler() {
+            if (this.readyState === this.DONE) {
+              if (this.status === 200) {
+                resolve(this.response);
+              } else {
+                reject(new Error('getJSON: `' + url + '` failed with status: [' + this.status + ']'));
+              }
+            }
+          };
+        });
+      }
+
+      getJSON('/posts.json').then(function(json) {
+        // on fulfillment
+      }, function(reason) {
+        // on rejection
+      });
+      ```
+
+      Unlike callbacks, promises are great composable primitives.
+
+      ```js
+      Promise.all([
+        getJSON('/posts'),
+        getJSON('/comments')
+      ]).then(function(values){
+        values[0] // => postsJSON
+        values[1] // => commentsJSON
+
+        return values;
+      });
+      ```
+
+      @class Promise
+      @param {function} resolver
+      Useful for tooling.
+      @constructor
+    */
+    function lib$es6$promise$promise$$Promise(resolver) {
+      this._id = lib$es6$promise$promise$$counter++;
+      this._state = undefined;
+      this._result = undefined;
+      this._subscribers = [];
+
+      if (lib$es6$promise$$internal$$noop !== resolver) {
+        if (!lib$es6$promise$utils$$isFunction(resolver)) {
+          lib$es6$promise$promise$$needsResolver();
+        }
+
+        if (!(this instanceof lib$es6$promise$promise$$Promise)) {
+          lib$es6$promise$promise$$needsNew();
+        }
+
+        lib$es6$promise$$internal$$initializePromise(this, resolver);
+      }
+    }
+
+    lib$es6$promise$promise$$Promise.all = lib$es6$promise$promise$all$$default;
+    lib$es6$promise$promise$$Promise.race = lib$es6$promise$promise$race$$default;
+    lib$es6$promise$promise$$Promise.resolve = lib$es6$promise$promise$resolve$$default;
+    lib$es6$promise$promise$$Promise.reject = lib$es6$promise$promise$reject$$default;
+
+    lib$es6$promise$promise$$Promise.prototype = {
+      constructor: lib$es6$promise$promise$$Promise,
+
+    /**
+      The primary way of interacting with a promise is through its `then` method,
+      which registers callbacks to receive either a promise's eventual value or the
+      reason why the promise cannot be fulfilled.
+
+      ```js
+      findUser().then(function(user){
+        // user is available
+      }, function(reason){
+        // user is unavailable, and you are given the reason why
+      });
+      ```
+
+      Chaining
+      --------
+
+      The return value of `then` is itself a promise.  This second, 'downstream'
+      promise is resolved with the return value of the first promise's fulfillment
+      or rejection handler, or rejected if the handler throws an exception.
+
+      ```js
+      findUser().then(function (user) {
+        return user.name;
+      }, function (reason) {
+        return 'default name';
+      }).then(function (userName) {
+        // If `findUser` fulfilled, `userName` will be the user's name, otherwise it
+        // will be `'default name'`
+      });
+
+      findUser().then(function (user) {
+        throw new Error('Found user, but still unhappy');
+      }, function (reason) {
+        throw new Error('`findUser` rejected and we're unhappy');
+      }).then(function (value) {
+        // never reached
+      }, function (reason) {
+        // if `findUser` fulfilled, `reason` will be 'Found user, but still unhappy'.
+        // If `findUser` rejected, `reason` will be '`findUser` rejected and we're unhappy'.
+      });
+      ```
+      If the downstream promise does not specify a rejection handler, rejection reasons will be propagated further downstream.
+
+      ```js
+      findUser().then(function (user) {
+        throw new PedagogicalException('Upstream error');
+      }).then(function (value) {
+        // never reached
+      }).then(function (value) {
+        // never reached
+      }, function (reason) {
+        // The `PedgagocialException` is propagated all the way down to here
+      });
+      ```
+
+      Assimilation
+      ------------
+
+      Sometimes the value you want to propagate to a downstream promise can only be
+      retrieved asynchronously. This can be achieved by returning a promise in the
+      fulfillment or rejection handler. The downstream promise will then be pending
+      until the returned promise is settled. This is called *assimilation*.
+
+      ```js
+      findUser().then(function (user) {
+        return findCommentsByAuthor(user);
+      }).then(function (comments) {
+        // The user's comments are now available
+      });
+      ```
+
+      If the assimliated promise rejects, then the downstream promise will also reject.
+
+      ```js
+      findUser().then(function (user) {
+        return findCommentsByAuthor(user);
+      }).then(function (comments) {
+        // If `findCommentsByAuthor` fulfills, we'll have the value here
+      }, function (reason) {
+        // If `findCommentsByAuthor` rejects, we'll have the reason here
+      });
+      ```
+
+      Simple Example
+      --------------
+
+      Synchronous Example
+
+      ```javascript
+      var result;
+
+      try {
+        result = findResult();
+        // success
+      } catch(reason) {
+        // failure
+      }
+      ```
+
+      Errback Example
+
+      ```js
+      findResult(function(result, err){
+        if (err) {
+          // failure
+        } else {
+          // success
+        }
+      });
+      ```
+
+      Promise Example;
+
+      ```javascript
+      findResult().then(function(result){
+        // success
+      }, function(reason){
+        // failure
+      });
+      ```
+
+      Advanced Example
+      --------------
+
+      Synchronous Example
+
+      ```javascript
+      var author, books;
+
+      try {
+        author = findAuthor();
+        books  = findBooksByAuthor(author);
+        // success
+      } catch(reason) {
+        // failure
+      }
+      ```
+
+      Errback Example
+
+      ```js
+
+      function foundBooks(books) {
+
+      }
+
+      function failure(reason) {
+
+      }
+
+      findAuthor(function(author, err){
+        if (err) {
+          failure(err);
+          // failure
+        } else {
+          try {
+            findBoooksByAuthor(author, function(books, err) {
+              if (err) {
+                failure(err);
+              } else {
+                try {
+                  foundBooks(books);
+                } catch(reason) {
+                  failure(reason);
+                }
+              }
+            });
+          } catch(error) {
+            failure(err);
+          }
+          // success
+        }
+      });
+      ```
+
+      Promise Example;
+
+      ```javascript
+      findAuthor().
+        then(findBooksByAuthor).
+        then(function(books){
+          // found books
+      }).catch(function(reason){
+        // something went wrong
+      });
+      ```
+
+      @method then
+      @param {Function} onFulfilled
+      @param {Function} onRejected
+      Useful for tooling.
+      @return {Promise}
+    */
+      then: function(onFulfillment, onRejection) {
+        var parent = this;
+        var state = parent._state;
+
+        if (state === lib$es6$promise$$internal$$FULFILLED && !onFulfillment || state === lib$es6$promise$$internal$$REJECTED && !onRejection) {
+          return this;
+        }
+
+        var child = new this.constructor(lib$es6$promise$$internal$$noop);
+        var result = parent._result;
+
+        if (state) {
+          var callback = arguments[state - 1];
+          lib$es6$promise$asap$$default(function(){
+            lib$es6$promise$$internal$$invokeCallback(state, child, callback, result);
+          });
+        } else {
+          lib$es6$promise$$internal$$subscribe(parent, child, onFulfillment, onRejection);
+        }
+
+        return child;
+      },
+
+    /**
+      `catch` is simply sugar for `then(undefined, onRejection)` which makes it the same
+      as the catch block of a try/catch statement.
+
+      ```js
+      function findAuthor(){
+        throw new Error('couldn't find that author');
+      }
+
+      // synchronous
+      try {
+        findAuthor();
+      } catch(reason) {
+        // something went wrong
+      }
+
+      // async with promises
+      findAuthor().catch(function(reason){
+        // something went wrong
+      });
+      ```
+
+      @method catch
+      @param {Function} onRejection
+      Useful for tooling.
+      @return {Promise}
+    */
+      'catch': function(onRejection) {
+        return this.then(null, onRejection);
+      }
+    };
+    function lib$es6$promise$polyfill$$polyfill() {
+      var local;
+
+      if (typeof global !== 'undefined') {
+          local = global;
+      } else if (typeof self !== 'undefined') {
+          local = self;
+      } else {
+          try {
+              local = Function('return this')();
+          } catch (e) {
+              throw new Error('polyfill failed because global object is unavailable in this environment');
+          }
+      }
+
+      var P = local.Promise;
+
+      if (P && Object.prototype.toString.call(P.resolve()) === '[object Promise]' && !P.cast) {
+        return;
+      }
+
+      local.Promise = lib$es6$promise$promise$$default;
+    }
+    var lib$es6$promise$polyfill$$default = lib$es6$promise$polyfill$$polyfill;
+
+    var lib$es6$promise$umd$$ES6Promise = {
+      'Promise': lib$es6$promise$promise$$default,
+      'polyfill': lib$es6$promise$polyfill$$default
+    };
+
+    /* global define:true module:true window: true */
+    if (typeof define === 'function' && define['amd']) {
+      define(function() { return lib$es6$promise$umd$$ES6Promise; });
+    } else if (typeof module !== 'undefined' && module['exports']) {
+      module['exports'] = lib$es6$promise$umd$$ES6Promise;
+    } else if (typeof this !== 'undefined') {
+      this['ES6Promise'] = lib$es6$promise$umd$$ES6Promise;
+    }
+
+    lib$es6$promise$polyfill$$default();
+}).call(this);
+
+
+/* global define */
+
+(function () {
+  var isNode = typeof window === 'undefined'
+  var root = isNode ? global : window
+  var Buffer = isNode ? require('buffer').Buffer : null
+  var FormData = isNode ? require('form-data') : window.FormData
+
+  var _hasOwnProperty = Object.prototype.hasOwnProperty
+
+  var FORM_EQ = '='
+  var FORM_SEP = '&'
+
+  var JSON_MIME_REGEXP = /^application\/(?:[\w!#\$%&\*`\-\.\^~]*\+)?json$/i
+  var QUERY_MIME_REGEXP = /^application\/x-www-form-urlencoded$/i
+  var FORM_MIME_REGEXP = /^multipart\/form-data$/i
+
+  var parseRawHeaders
+
+  if (typeof Promise === 'undefined') {
+    var PROMISE_ERROR_MESSAGE = (isNode ? 'global' : 'window') + '.Promise ' +
+      'is undefined and should be polyfilled. Check out ' +
+      'https://github.com/jakearchibald/es6-promise for more information.'
+
+    throw new TypeError(PROMISE_ERROR_MESSAGE)
+  }
+
+  /**
+   * Copy objects onto another.
+   *
+   * @param  {Object} dest
+   * @return {Object}
+   */
+  function assign (dest /*, ...src */) {
+    for (var i = 1; i < arguments.length; i++) {
+      for (var key in arguments[i]) {
+        if (_hasOwnProperty.call(arguments[i], key)) {
+          dest[key] = arguments[i][key]
+        }
+      }
+    }
+
+    return dest
+  }
+
+  /**
+   * Create a function to set progress properties on a request instance.
+   *
+   * @param  {Object}   obj
+   * @param  {String}   property
+   * @param  {String}   callback
+   * @return {Function}
+   */
+  function setProgress (obj, property, callback) {
+    var method = '_set' + property.charAt(0).toUpperCase() + property.slice(1)
+
+    /**
+     * Create the progress update method.
+     *
+     * @param {Number} num
+     */
+    obj[method] = function (num) {
+      if (this[property] === num) {
+        return
+      }
+
+      this[property] = num
+
+      this[callback]()
+      this._completed()
+      this._emitProgress()
+    }
+  }
+
+  /**
+   * Generate a random number between two digits.
+   *
+   * @param  {Number} low
+   * @param  {Number} high
+   * @return {Number}
+   */
+  function between (low, high) {
+    var diff = high - low
+
+    return Math.random() * diff + low
+  }
+
+  /**
+   * Calculate the percentage of a request.
+   *
+   * @param  {Number} size
+   * @param  {Number} total
+   * @return {Number}
+   */
+  function calc (n, size, total) {
+    if (isNaN(total)) {
+      return n + ((1 - n) * between(0.1, 0.45))
+    }
+
+    return Math.min(1, size / total)
+  }
+
+  /**
+   * Turn a value into a number (avoid `null` becoming `0`).
+   *
+   * @param  {String} str
+   * @return {Number}
+   */
+  function num (str) {
+    return str == null ? NaN : Number(str)
+  }
+
+  /**
+   * Check if an object is actually an object (not a primitive type).
+   *
+   * @param  {Object}  obj
+   * @return {Boolean}
+   */
+  function isObject (obj) {
+    return Object(obj) === obj
+  }
+
+  /**
+   * Create a stream error instance.
+   *
+   * @param  {Popsicle} self
+   * @return {Error}
+   */
+  function streamError (self) {
+    var err = self.error('Request is streaming')
+    err.stream = true
+    return err
+  }
+
+  /**
+   * Create a timeout error instance.
+   *
+   * @param  {Popsicle} self
+   * @return {Error}
+   */
+  function abortError (self) {
+    var timeout = self.timeout
+    var err
+
+    if (self.timedout) {
+      err = self.error('Timeout of ' + timeout + 'ms exceeded')
+      err.timeout = timeout
+    } else {
+      err = self.error('Request aborted')
+      err.abort = true
+    }
+
+    return err
+  }
+
+  /**
+   * Create a parse error instance.
+   *
+   * @param  {Popsicle} self
+   * @param  {Error}    e
+   * @return {Error}
+   */
+  function parseError (self, e) {
+    var err = self.error('Unable to parse the response body')
+    err.parse = true
+    err.original = e
+    return err
+  }
+
+  /**
+   * Create a CSP error instance (Cross-.
+   *
+   * @param  {Popsicle} self
+   * @param  {Error}    e
+   * @return {Error}
+   */
+  function cspError (self, e) {
+    var err = self.error('Refused to connect to "' + self.fullUrl() + '"')
+    err.csp = true
+    err.original = e
+    return err
+  }
+
+  /**
+   * Create an unavailable request error (offline, not resolvable, CORS).
+   *
+   * @param  {Popsicle} self
+   * @return {Error}
+   */
+  function unavailableError (self) {
+    var err = self.error('Unable to connect to "' + self.fullUrl() + '"')
+    err.unavailable = true
+    return err
+  }
+
+  /**
+   * Create a blocked error (HTTPS -> HTTP).
+   *
+   * @param  {Popsicle} self
+   * @return {Error}
+   */
+  function blockedError (self) {
+    var err = self.error('The request to "' + self.fullUrl() + '" was blocked')
+    err.blocked = true
+    return err
+  }
+
+  /**
+   * Return the content type from a header string.
+   *
+   * @param  {String} str
+   * @return {String}
+   */
+  function type (str) {
+    return str == null ? '' : str.split(/ *; */)[0]
+  }
+
+  /**
+   * Encode a URI component according to the spec.
+   *
+   * @param  {String} str
+   * @return {String}
+   */
+  function encode (str) {
+    if (str == null) {
+      return ''
+    }
+
+    try {
+      return encodeURIComponent(str)
+        .replace(/[!'()]/g, root.escape)
+        .replace(/\*/g, '%2A')
+    } catch (e) {
+      return ''
+    }
+  }
+
+  /**
+   * Append a value to an object using the key.
+   *
+   * @param  {Object} object
+   * @param  {String} key
+   * @param  {String} value
+   * @return {Object}
+   */
+  function append (object, key, value) {
+    if (!object[key]) {
+      object[key] = value
+    } else if (Array.isArray(object[key])) {
+      object[key].push(value)
+    } else {
+      object[key] = [object[key], value]
+    }
+  }
+
+  /**
+   * Turn an object into a query string.
+   *
+   * @param  {Object} obj
+   * @return {String}
+   */
+  function stringifyQuery (obj) {
+    var params = []
+
+    Object.keys(obj).forEach(function (key) {
+      var value = obj[key]
+      var keyStr = encode(key) + FORM_EQ
+
+      if (Array.isArray(value)) {
+        for (var i = 0; i < value.length; i++) {
+          params.push(keyStr + encode(value[i]))
+        }
+      } else {
+        params.push(keyStr + encode(value))
+      }
+    })
+
+    return params.join(FORM_SEP)
+  }
+
+  /**
+   * Convert a query string into an object.
+   *
+   * @param  {String} qs
+   * @return {Object}
+   */
+  function parseQuery (qs) {
+    // Unable to parse empty values.
+    if (qs == null || qs === '') {
+      return null
+    }
+
+    qs = String(qs).split(FORM_SEP)
+
+    var obj = {}
+    var maxKeys = 1000
+    var len = qs.length > maxKeys ? maxKeys : qs.length
+
+    for (var i = 0; i < len; i++) {
+      var key = qs[i].replace(/\+/g, '%20')
+      var value = ''
+      var index = key.indexOf(FORM_EQ)
+
+      if (index !== -1) {
+        value = key.substr(index + 1)
+        key = key.substr(0, index)
+      }
+
+      key = decodeURIComponent(key)
+      value = decodeURIComponent(value)
+
+      if (!_hasOwnProperty.call(obj, key)) {
+        obj[key] = value
+      } else if (Array.isArray(obj[key])) {
+        obj[key].push(value)
+      } else {
+        obj[key] = [obj[key], value]
+      }
+    }
+
+    return obj
+  }
+
+  /**
+   * Check whether the object is already natively supported.
+   *
+   * @param  {*}       object
+   * @return {Boolean}
+   */
+  var isHostObject
+
+  if (isNode) {
+    isHostObject = function (object) {
+      return object instanceof Buffer || object instanceof FormData
+    }
+  } else {
+    isHostObject = function (object) {
+      var str = Object.prototype.toString.call(object)
+
+      switch (str) {
+        case '[object File]':
+        case '[object Blob]':
+        case '[object FormData]':
+        case '[object ArrayBuffer]':
+          return true
+        default:
+          return false
+      }
+    }
+  }
+
+  /**
+   * Convert an object into a form data instance.
+   *
+   * @param  {Object}   parameters
+   * @return {FormData}
+   */
+  function toFormData (obj) {
+    var form = new FormData()
+
+    if (Object(obj) === obj) {
+      Object.keys(obj).forEach(function (name) {
+        form.append(name, obj[name])
+      })
+    }
+
+    return form
+  }
+
+  /**
+   * Convert the request body into a valid string.
+   *
+   * @param {Request} request
+   */
+  function stringifyRequest (request) {
+    var body = request.body
+
+    // Convert primitives types into strings.
+    if (!isObject(body)) {
+      request.body = body == null ? null : String(body)
+
+      return
+    }
+
+    // Return supported objects.
+    if (isHostObject(body)) {
+      return
+    }
+
+    var type = request.type()
+
+    // Set the default mime type to be JSON if none exists.
+    if (!type) {
+      type = 'application/json'
+
+      request.type(type)
+    }
+
+    if (JSON_MIME_REGEXP.test(type)) {
+      request.body = JSON.stringify(body)
+    } else if (FORM_MIME_REGEXP.test(type)) {
+      request.body = toFormData(body)
+    } else if (QUERY_MIME_REGEXP.test(type)) {
+      request.body = stringifyQuery(body)
+    }
+  }
+
+  /**
+   * Automatically parse the response body.
+   *
+   * @param  {Response} response
+   * @return {Response}
+   */
+  function parseResponse (response) {
+    var body = response.body
+    var type = response.type()
+
+    if (body === '') {
+      response.body = null
+
+      return response
+    }
+
+    try {
+      if (JSON_MIME_REGEXP.test(type)) {
+        response.body = body === '' ? null : JSON.parse(body)
+      } else if (QUERY_MIME_REGEXP.test(type)) {
+        response.body = parseQuery(body)
+      }
+    } catch (e) {
+      throw parseError(response, e)
+    }
+
+    return response
+  }
+
+  /**
+   * Set the default request accept header.
+   *
+   * @param {Request} request
+   */
+  function defaultAccept (request) {
+    // If we have no accept header set already, default to accepting
+    // everything. This is needed because otherwise Firefox defaults to
+    // an accept header of `html/xml`.
+    if (!request.get('Accept')) {
+      request.set('Accept', '*/*')
+    }
+  }
+
+  /**
+   * Correct the content type request header.
+   *
+   * @param {Request} request
+   */
+  function correctType (request) {
+    // Remove the `Content-Type` header from form data requests. The node
+    // `request` module supports `form-data` to automatically add headers,
+    // and the browser will ses it on `xhr.send` (when it's not already set).
+    if (request.body instanceof FormData) {
+      request.remove('Content-Type')
+    }
+  }
+
+  /**
+   * Set headers on an instance.
+   *
+   * @param {Request} self
+   * @param {Object}  headers
+   */
+  function setHeaders (self, headers) {
+    if (headers) {
+      Object.keys(headers).forEach(function (key) {
+        self.set(key, headers[key])
+      })
+    }
+  }
+
+  /**
+   * Lower-case the header name. Allow usage of `Referrer` and `Referer`.
+   *
+   * @param  {String} key
+   * @return {String}
+   */
+  function lowerHeader (key) {
+    var lower = key.toLowerCase()
+
+    if (lower === 'referer') {
+      return 'referrer'
+    }
+
+    return lower
+  }
+
+  /**
+   * Keep track of headers in a single instance.
+   */
+  function Headers () {
+    this.headers = {}
+    this.headerNames = {}
+  }
+
+  /**
+   * Set a header value.
+   *
+   * @param  {String} key
+   * @param  {String} value
+   * @return {Header}
+   */
+  Headers.prototype.set = function (key, value) {
+    if (typeof key !== 'string') {
+      setHeaders(this, key)
+
+      return this
+    }
+
+    var lower = lowerHeader(key)
+
+    this.headers[lower] = value
+    this.headerNames[lower] = key
+
+    return this
+  }
+
+  /**
+   * Get the original case-sensitive header name.
+   *
+   * @param  {String} key
+   * @return {String}
+   */
+  Headers.prototype.name = function (key) {
+    return this.headerNames[lowerHeader(key)]
+  }
+
+  /**
+   * Return case-insensitive header.
+   *
+   * @param  {String} header
+   * @return {String}
+   */
+  Headers.prototype.get = function (header) {
+    return this.headers[lowerHeader(header)]
+  }
+
+  /**
+   * Remove a header.
+   *
+   * @param  {String} header
+   * @return {Header}
+   */
+  Headers.prototype.remove = function (header) {
+    var lower = lowerHeader(header)
+
+    delete this.headers[lower]
+    delete this.headerNames[lower]
+
+    return this
+  }
+
+  /**
+   * Return or set the content type.
+   *
+   * @param  {String} [value]
+   * @return {String}
+   */
+  Headers.prototype.type = function (value) {
+    if (value) {
+      return this.set('Content-Type', value)
+    }
+
+    return type(this.headers['content-type'])
+  }
+
+  /**
+   * Create a response instance.
+   *
+   * @param {Object} options
+   */
+  function Response (raw, request) {
+    Headers.call(this)
+
+    this.raw = raw
+
+    this.request = request
+    request.response = this
+  }
+
+  /**
+   * Inherits from `Headers`.
+   */
+  Response.prototype = Object.create(Headers.prototype)
+  Response.prototype.constructor = Response
+
+  /**
+   * Return the status type number. E.g. 2 === 201.
+   *
+   * @return {Number}
+   */
+  Response.prototype.statusType = function () {
+    return ~~(this.status / 100)
+  }
+
+  /**
+   * Check whether the response was an info response. Status >= 100 < 200.
+   *
+   * @return {Boolean}
+   */
+  Response.prototype.info = function () {
+    return this.statusType() === 1
+  }
+
+  /**
+   * Check whether the response was ok. Status >= 200 < 300.
+   *
+   * @return {Boolean}
+   */
+  Response.prototype.ok = function () {
+    return this.statusType() === 2
+  }
+
+  /**
+   * Check whether the response was a client error. Status >= 400 < 500.
+   *
+   * @return {Boolean}
+   */
+  Response.prototype.clientError = function () {
+    return this.statusType() === 4
+  }
+
+  /**
+   * Check whether the response was a server error. Status >= 500 < 600.
+   *
+   * @return {Boolean}
+   */
+  Response.prototype.serverError = function () {
+    return this.statusType() === 5
+  }
+
+  /**
+   * Create a popsicle error instance.
+   *
+   * @param  {String} str
+   * @return {Error}
+   */
+  Response.prototype.error = function (str) {
+    return this.request.error(str)
+  }
+
+  /**
+   * Initialise a request instance.
+   *
+   * @param {(Object|String)} options
+   */
+  function Request (options) {
+    Headers.call(this)
+
+    var query = options.query
+
+    // Request options.
+    this.body = options.body
+    this.url = options.url
+    this.method = (options.method || 'GET').toUpperCase()
+    this.query = assign({}, isObject(query) ? query : parseQuery(query))
+    this.timeout = options.timeout
+
+    // Node specific options.
+    this.jar = options.jar
+    this.withCredentials = options.withCredentials === true
+    this.rejectUnauthorized = options.rejectUnauthorized !== false
+
+    // Progress state.
+    this.uploaded = this.downloaded = this.completed = 0
+    this.uploadSize = this.downloadSize = 0
+    this.uploadTotal = this.downloadTotal = NaN
+
+    // Set request headers.
+    setHeaders(this, options.headers)
+
+    // Request state.
+    this.aborted = false
+
+    // Parse query strings already set.
+    var queryIndex = options.url.indexOf('?')
+
+    if (queryIndex > -1) {
+      this.url = options.url.substr(0, queryIndex)
+
+      // Copy url query parameters onto query object.
+      assign(this.query, parseQuery(options.url.substr(queryIndex + 1)))
+    }
+  }
+
+  /**
+   * Inherits from `Headers`.
+   */
+  Request.prototype = Object.create(Headers.prototype)
+  Request.prototype.constructor = Request
+
+  /**
+   * Retrieve the current request URL.
+   *
+   * @return {String}
+   */
+  Request.prototype.fullUrl = function () {
+    var url = this.url
+    var query = stringifyQuery(this.query)
+
+    if (query) {
+      url += (url.indexOf('?') === -1 ? '?' : '&') + query
+    }
+
+    return url
+  }
+
+  /**
+   * Track request completion progress.
+   *
+   * @param  {Function} fn
+   * @return {Request}
+   */
+  Request.prototype.progress = function (fn) {
+    if (this.completed) {
+      return this
+    }
+
+    this._progressFns = this._progressFns || []
+
+    this._progressFns.push(fn)
+
+    return this
+  }
+
+  /**
+   * Set upload progress properties.
+   *
+   * @private
+   * @type  {Function}
+   * @param {Number}   num
+   */
+  setProgress(Request.prototype, 'uploadSize', '_uploaded')
+  setProgress(Request.prototype, 'downloadSize', '_downloaded')
+
+  /**
+   * Calculate the uploaded percentage.
+   */
+  Request.prototype._uploaded = function () {
+    var n = this.uploaded
+    var size = this.uploadSize
+    var total = this.uploadTotal
+
+    this.uploaded = calc(n, size, total)
+  }
+
+  /**
+   * Calculate the downloaded percentage.
+   */
+  Request.prototype._downloaded = function () {
+    var n = this.downloaded
+    var size = this.downloadSize
+    var total = this.downloadTotal
+
+    this.downloaded = calc(n, size, total)
+  }
+
+  /**
+   * Update the completed percentage.
+   */
+  Request.prototype._completed = function () {
+    this.completed = (this.uploaded + this.downloaded) / 2
+  }
+
+  /**
+   * Emit a request progress event (upload or download).
+   */
+  Request.prototype._emitProgress = function () {
+    var fns = this._progressFns
+
+    if (!fns || this._error) {
+      return
+    }
+
+    try {
+      for (var i = 0; i < fns.length; i++) {
+        fns[i](this)
+      }
+    } catch (e) {
+      this._errored(e)
+    }
+  }
+
+  /**
+   * Finished uploading.
+   */
+  Request.prototype._uploadFinished = function () {
+    if (this.uploaded === 1) {
+      return
+    }
+
+    this.uploaded = 1
+    this.completed = 0.5
+
+    this._emitProgress()
+  }
+
+  /**
+   * Finished downloading.
+   */
+  Request.prototype._downloadFinished = function () {
+    if (this.downloaded === 1) {
+      return
+    }
+
+    this.downloaded = 1
+    this.completed = 1
+
+    this._emitProgress()
+  }
+
+  /**
+   * Allows request plugins.
+   *
+   * @return {Request}
+   */
+  Request.prototype.use = function (fn) {
+    fn(this)
+
+    return this
+  }
+
+  /**
+   * Setup the request instance (promises and streams).
+   */
+  Request.prototype._setup = function () {
+    var self = this
+    var timeout = this.timeout
+
+    this.use(defaultAccept)
+    this.use(stringifyRequest)
+    this.use(correctType)
+
+    this.progress(function (e) {
+      if (e.completed === 1) {
+        delete self._progressFns
+      }
+    })
+
+    if (timeout) {
+      this._timer = setTimeout(function () {
+        self.timedout = true
+        self.abort()
+      }, timeout)
+    }
+  }
+
+  /**
+   * Trigger the HTTP request.
+   *
+   * @return {Promise}
+   */
+  Request.prototype.create = function () {
+    // Setup a new promise request if none exists.
+    if (!this._promise) {
+      // If already aborted, create a rejected promise.
+      if (this.aborted) {
+        this._promise = Promise.reject(abortError(this))
+      } else {
+        this._setup()
+
+        this._promise = this._create().then(parseResponse)
+      }
+    }
+
+    return this._promise
+  }
+
+  /**
+   * Abort request.
+   *
+   * @return {Request}
+   */
+  Request.prototype.abort = function () {
+    if (this.aborted) {
+      return this
+    }
+
+    this.aborted = true
+
+    // Set everything to completed.
+    this.downloaded = this.uploaded = this.completed = 1
+
+    // Abort and emit the final progress event.
+    this._abort()
+    this._emitProgress()
+    clearTimeout(this._timer)
+
+    return this
+  }
+
+  /**
+   * Trigger a request-related error that should break requests.
+   *
+   * @param {Error} err
+   */
+  Request.prototype._errored = function (err) {
+    this._error = err
+    this.abort()
+  }
+
+  /**
+   * Create a popsicle error instance.
+   *
+   * @param  {String} str
+   * @return {Error}
+   */
+  Request.prototype.error = function (str) {
+    var err = new Error(str)
+    err.popsicle = this
+    return err
+  }
+
+  /**
+   * Support node-style callbacks.
+   *
+   * @param {Function} cb
+   */
+  Request.prototype.exec = function exec (cb) {
+    this.then(function (value) {
+      cb(null, value)
+    }, cb)
+  }
+
+  /**
+   * Standard promise chain method.
+   *
+   * @param  {Function} onFulfilled
+   * @param  {Function} onRejected
+   * @return {Promise}
+   */
+  Request.prototype.then = function (onFulfilled, onRejected) {
+    return this.create().then(onFulfilled, onRejected)
+  }
+
+  /**
+   * Standard promise error handling.
+   *
+   * @param  {Function} cb
+   * @return {Promise}
+   */
+  Request.prototype['catch'] = function (onRejected) {
+    return this.create()['catch'](onRejected)
+  }
+
+  /**
+   * Handle requests differently on node and browsers.
+   */
+  if (isNode) {
+    var request = require('request')
+    var version = require('./package.json').version
+
+    /**
+     * Return options sanitized for the request module.
+     *
+     * @param  {Request} self
+     * @return {Object}
+     */
+    var requestOptions = function (self) {
+      var request = {}
+
+      request.url = self.fullUrl()
+      request.method = self.method
+      request.jar = self.jar
+      request.headers = {
+        'User-Agent': 'node-popsicle/' + version
+      }
+
+      // Add headers with the correct case names.
+      Object.keys(self.headers).forEach(function (header) {
+        request.headers[self.name(header)] = self.get(header)
+      })
+
+      // The `request` module supports form data under a private property.
+      if (self.body instanceof FormData) {
+        request._form = self.body
+      } else {
+        request.body = self.body
+      }
+
+      if (self.rejectUnauthorized) {
+        request.rejectUnauthorized = true
+      }
+
+      return request
+    }
+
+    /**
+     * Return the byte length of an input.
+     *
+     * @param  {(String|Buffer)} data
+     * @return {Number}
+     */
+    var byteLength = function (data) {
+      if (Buffer.isBuffer(data)) {
+        return data.length
+      }
+
+      if (typeof data === 'string') {
+        return Buffer.byteLength(data)
+      }
+
+      return 0
+    }
+
+    /**
+     * Track the current download size.
+     *
+     * @param {Request} self
+     * @param {request} request
+     */
+    var trackRequestProgress = function (self, request) {
+      self._request = request
+
+      function onRequest (request) {
+        var write = request.write
+
+        self.uploadTotal = num(request.getHeader('Content-Length'))
+
+        // Override `Request.prototype.write` to track amount of sent data.
+        request.write = function (data) {
+          self._setUploadSize(self.uploadSize + byteLength(data))
+
+          return write.apply(this, arguments)
+        }
+      }
+
+      function onResponse (response) {
+        response.on('data', onResponseData)
+        self.downloadTotal = num(response.headers['content-length'])
+        self._uploadFinished()
+      }
+
+      function onResponseData (data) {
+        // Data should always be a `Buffer` instance.
+        self._setDownloadSize(self.downloadSize + data.length)
+      }
+
+      request.on('request', onRequest)
+      request.on('response', onResponse)
+    }
+
+    /**
+     * Turn raw headers into a header object.
+     *
+     * @param  {Object} response
+     * @return {Object}
+     */
+    parseRawHeaders = function (response) {
+      if (!response.rawHeaders) {
+        return response.headers
+      }
+
+      var headers = {}
+      var rawHeaders = response.rawHeaders
+
+      for (var i = 0; i < rawHeaders.length; i = i + 2) {
+        var name = rawHeaders[i]
+        var value = rawHeaders[i + 1]
+
+        append(headers, name, value)
+      }
+
+      return headers
+    }
+
+    /**
+     * Trigger the request in node.
+     *
+     * @return {Promise}
+     */
+    Request.prototype._create = function () {
+      var self = this
+
+      // Throw on promise creation if streaming.
+      if (this._stream) {
+        throw streamError(this)
+      }
+
+      return new Promise(function (resolve, reject) {
+        var opts = requestOptions(self)
+
+        var req = request(opts, function (err, response) {
+          // Clean up listeners.
+          delete self._request
+          self._downloadFinished()
+
+          if (err) {
+            // Node.js core error (ECONNRESET, EPIPE).
+            if (typeof err.code === 'string') {
+              return reject(unavailableError(self))
+            }
+
+            return reject(err)
+          }
+
+          var res = new Response(response, self)
+
+          res.body = response.body
+          res.status = response.statusCode
+          res.set(parseRawHeaders(response))
+
+          return resolve(res)
+        })
+
+        req.on('abort', function () {
+          if (self._error) {
+            return reject(self._error)
+          }
+
+          return reject(abortError(self))
+        })
+
+        trackRequestProgress(self, req)
+      })
+    }
+
+    /**
+     * Abort a running node request.
+     *
+     * @return {Request}
+     */
+    Request.prototype._abort = function () {
+      if (this._request) {
+        this._request.abort()
+      }
+    }
+
+    /**
+     * Expose the current request stream.
+     *
+     * @return {Object}
+     */
+    Request.prototype.stream = function () {
+      if (!this._stream) {
+        this._setup()
+
+        // Initialize a streaming request instance.
+        // TODO: Emit a stream error if already aborted.
+        // TODO: Catch stream errors and coerce to popsicle errors.
+        var req = this._stream = request(requestOptions(this))
+
+        trackRequestProgress(this, req)
+      }
+
+      return this._stream
+    }
+
+    /**
+     * Pipe the current response into another stream.
+     *
+     * @param  {Object} stream
+     * @return {Object}
+     */
+    Request.prototype.pipe = function (stream) {
+      return this.stream().pipe(stream)
+    }
+  } else {
+    /**
+     * Determine XHR method.
+     *
+     * @return {Function}
+     */
+    var getXHR = function () {
+      if (root.XMLHttpRequest) {
+        return new root.XMLHttpRequest()
+      }
+
+      try { return new root.ActiveXObject('Microsoft.XMLHTTP') } catch (e) {}
+      try { return new root.ActiveXObject('Msxml2.XMLHTTP.6.0') } catch (e) {}
+      try { return new root.ActiveXObject('Msxml2.XMLHTTP.3.0') } catch (e) {}
+      try { return new root.ActiveXObject('Msxml2.XMLHTTP') } catch (e) {}
+
+      throw new Error('XMLHttpRequest is not available')
+    }
+
+    /**
+     * Parse headers from a string.
+     *
+     * @param  {XMLHttpRequest} xhr
+     * @return {Object}
+     */
+    parseRawHeaders = function (xhr) {
+      var headers = {}
+      var lines = xhr.getAllResponseHeaders().split(/\r?\n/)
+
+      lines.pop()
+
+      lines.forEach(function (header) {
+        var index = header.indexOf(':')
+
+        var name = header.substr(0, index)
+        var value = header.substr(index + 1).trim()
+
+        append(headers, name, value)
+      })
+
+      return headers
+    }
+
+    /**
+     * Trigger the request in a browser.
+     *
+     * @return {Promise}
+     */
+    Request.prototype._create = function () {
+      var self = this
+      var url = self.fullUrl()
+      var method = self.method
+
+      return new Promise(function (resolve, reject) {
+        // Loading HTTP resources from HTTPS is restricted and uncatchable.
+        if (window.location.protocol === 'https:' && /^http\:/.test(url)) {
+          return reject(blockedError(self))
+        }
+
+        var xhr = self._xhr = getXHR()
+
+        var res = new Response(xhr, self)
+
+        xhr.onreadystatechange = function () {
+          if (xhr.readyState === 2) {
+            // Parse raw headers to avoid errors when reading values.
+            res.set(parseRawHeaders(xhr))
+            res.status = xhr.status === 1223 ? 204 : xhr.status
+
+            // Try setting the total download size.
+            self.downloadTotal = num(res.get('Content-Length'))
+
+            // Trigger upload finished after we get the response length.
+            // Otherwise, it's possible this method will error and make the
+            // `xhr` object invalid.
+            self._uploadFinished()
+          }
+
+          if (xhr.readyState === 4) {
+            // Clean up listeners.
+            delete self._xhr
+            self._downloadFinished()
+
+            if (self._error) {
+              return reject(self._error)
+            }
+
+            // Handle the aborted state internally, PhantomJS doesn't reset
+            // `xhr.status` to zero on abort.
+            if (self.aborted) {
+              return reject(abortError(self))
+            }
+
+            if (xhr.status === 0) {
+              return reject(unavailableError(self))
+            }
+
+            res.body = xhr.responseText
+
+            return resolve(res)
+          }
+        }
+
+        // Use `progress` events to avoid calculating byte length.
+        xhr.onprogress = function (e) {
+          if (e.lengthComputable) {
+            self.downloadTotal = e.total
+          }
+
+          self._setDownloadSize(e.loaded)
+        }
+
+        // No upload will occur with these requests.
+        if (method === 'GET' || method === 'HEAD' || !xhr.upload) {
+          xhr.upload = {}
+
+          self.uploadTotal = 0
+          self._setUploadSize(0)
+        } else {
+          xhr.upload.onprogress = function (e) {
+            if (e.lengthComputable) {
+              self.uploadTotal = e.total
+            }
+
+            self._setUploadSize(e.loaded)
+          }
+        }
+
+        // XHR can fail to open when site CSP is set.
+        try {
+          xhr.open(method, url)
+        } catch (e) {
+          return reject(cspError(self, e))
+        }
+
+        // Send cookies with CORS.
+        if (self.withCredentials) {
+          xhr.withCredentials = true
+        }
+
+        // Set all headers with original casing.
+        Object.keys(self.headers).forEach(function (header) {
+          xhr.setRequestHeader(self.name(header), self.get(header))
+        })
+
+        xhr.send(self.body)
+      })
+    }
+
+    /**
+     * Abort a running XMLHttpRequest.
+     */
+    Request.prototype._abort = function () {
+      if (this._xhr) {
+        this._xhr.abort()
+      }
+    }
+  }
+
+  /**
+   * Create a new request instance.
+   *
+   * @param  {Object}   options
+   * @return {Request}
+   */
+  function popsicle (options) {
+    if (typeof options === 'string') {
+      return new Request({ url: options })
+    }
+
+    if (!options) {
+      throw new TypeError('No options specified')
+    }
+
+    if (typeof options.url !== 'string') {
+      throw new TypeError('No URL specified')
+    }
+
+    return new Request(options)
+  }
+
+  /**
+   * Initialize a form data instance.
+   */
+  popsicle.form = function (params) {
+    return toFormData(params)
+  }
+
+  /**
+   * Support cookie jars (on Node).
+   *
+   * @return {Object}
+   */
+  if (isNode) {
+    popsicle.jar = function () {
+      return request.jar()
+    }
+  } else {
+    popsicle.jar = function () {
+      throw new Error('Cookie jars are not supported in browsers')
+    }
+  }
+
+  /**
+   * Expose the `Request` and `Response` constructors.
+   */
+  popsicle.Request = Request
+  popsicle.Response = Response
+
+  if (typeof define === 'function' && define.amd) {
+    define([], function () {
+      return popsicle
+    })
+  } else if (typeof exports === 'object') {
+    module.exports = popsicle
+  } else {
+    root.popsicle = popsicle
+  }
+})()
+
 /**
  * marked - a markdown parser
  * Copyright (c) 2011-2014, Christopher Jeffrey. (MIT Licensed)

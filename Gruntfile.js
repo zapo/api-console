@@ -10,6 +10,8 @@ module.exports = function (grunt) {
     src: {
       js: ['src/**/*.js'],
       jsVendor: [
+        'bower_components/es6-promise/promise.js',
+        'bower_components/popsicle/popsicle.js',
         'bower_components/marked/lib/marked.js',
         'bower_components/raml-js-parser/dist/raml-parser.js',
         'bower_components/highlightjs/highlight.pack.js',
