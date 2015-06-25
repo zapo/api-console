@@ -28,10 +28,10 @@
 
   Oauth2.prototype.popsicleParametrize = function(options) {
     return {
-      url: options.url,
-      method: options.method,
-      body: options.body || options.data,
-      headers: options.headers
+      url:      options.url,
+      method:   options.method,
+      body:     options.body || options.data,
+      headers:  options.headers
     };
   };
 
